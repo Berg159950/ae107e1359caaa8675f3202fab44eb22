@@ -1,0 +1,113 @@
+name: build-bun-penryn
+
+on:
+  workflow_dispatch:
+    inputs:
+      bun_commit:
+        description: Bun commit to build
+        required: true
+        default: "44f6469e0d4ae93467aa65c7e3bc9001000c7b31"
+
+env:
+  BUN_COMMIT: ${{ github.event.inputs.bun_commit }}
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install system deps
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq ccache cmake ninja-build patchelf
+
+      - name: Setup ccache
+        uses: hendrikmuhs/ccache-action@v1.2
+        with:
+          key: bun-penryn-${{ env.BUN_COMMIT }}
+
+      - name: Setup Bun (for build script)
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Clone Bun
+        run: |
+          for i in 1 2 3; do
+            git clone --depth 1 https://github.com/oven-sh/bun.git /tmp/bun-src && break
+            [ $i -lt 3 ] && sleep 10
+          done
+          [ -d /tmp/bun-src/.git ] || exit 1
+          cd /tmp/bun-src
+          for i in 1 2 3; do
+            git fetch --depth 1 origin $BUN_COMMIT && break
+            [ $i -lt 3 ] && sleep 10
+          done
+          git checkout FETCH_HEAD
+
+      - name: Apply Penryn patch
+        run: |
+          cd /tmp/bun-src
+          # C++ march + safety: forbid SSE4.2/POPCNT, tune for Penryn
+          sed -i 's/-march=nehalem/-march=penryn/g' scripts/build/flags.ts
+          sed -i 's/flag: "-march=penryn"/flag: ["-march=penryn", "-mtune=penryn", "-mno-sse4.2", "-mno-popcnt"]/' scripts/build/flags.ts
+          sed -i 's|no SSE4.2/AVX, broadest compatibility|tuned for Penryn, no SSE4.2/POPCNT/AVX|' scripts/build/flags.ts
+          # Rust target-cpu
+          sed -i 's/-Ctarget-cpu=nehalem/-Ctarget-cpu=penryn/g' scripts/build/rust.ts
+          sed -i 's/"nehalem"/"penryn"/g' scripts/build/rust.ts
+          # QEMU verify
+          sed -i 's/Nehalem/Penryn/g' scripts/verify-baseline.ts
+          # ISA verifier allowlist
+          sed -i 's/NEHALEM_ALLOWED/PENRYN_ALLOWED/g' scripts/verify-baseline-static/src/main.rs
+          sed -i 's/nehalem/penryn/g' scripts/verify-baseline-static/src/main.rs
+          # CMakeLists dependencies
+          find . -name "CMakeLists.txt" -exec sed -i \
+            's/-march=nehalem/-march=penryn/g' {} +
+          find . -name "CMakeLists.txt" -exec sed -i \
+            's/target-cpu=nehalem/target-cpu=penryn/g' {} +
+          grep -rn --include="*.ts" --include="*.rs" --include="*.cpp" \
+            --include="*.h" --include="CMakeLists.txt" \
+            "march=nehalem\|target-cpu=nehalem\|flag:.*-march.*nehalem" . && \
+            { echo "ERROR: Nehalem still present!"; exit 1; } || \
+            echo "All Nehalem references patched successfully"
+
+      - name: Build Bun
+        run: |
+          cd /tmp/bun-src
+          bun run build:release --webkit=local 2>&1
+
+      - name: QEMU Penryn verify
+        run: |
+          sudo apt-get install -y -qq qemu-user
+          if [ -f /tmp/bun-src/build/release/bun ]; then
+            qemu-x86_64 -cpu Penryn /tmp/bun-src/build/release/bun --version
+          fi
+
+      - name: Bundle libs
+        run: |
+          BUN_BIN="/tmp/bun-src/build/release/bun"
+          [ -f "$BUN_BIN" ] || BUN_BIN="/tmp/bun-src/dist/bun/bun"
+          mkdir -p /tmp/bundle/lib
+          cp "$BUN_BIN" /tmp/bundle/bun.bin
+          ldd /tmp/bundle/bun.bin 2>/dev/null | grep "=> /" | awk '{print $3}' | while read lib; do
+            cp -n "$lib" /tmp/bundle/lib/ 2>/dev/null || true
+          done
+          rm -f /tmp/bundle/lib/libc.so.6 /tmp/bundle/lib/libm.so.6 2>/dev/null || true
+          cat > /tmp/bundle/bun << 'WRAPPER'
+          #!/bin/bash
+          DIR="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)"
+          export LD_LIBRARY_PATH="$DIR/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+          exec "$DIR/bun.bin" "$@"
+          WRAPPER
+          chmod +x /tmp/bundle/bun /tmp/bundle/bun.bin
+
+      - name: Smoke test
+        run: |
+          LD_LIBRARY_PATH= /tmp/bundle/bun --version
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: bun-penryn
+          path: /tmp/bundle/
