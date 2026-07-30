@@ -94,6 +94,24 @@ jobs:
             's/-march=nehalem/-march=penryn/g' {} +
           find . -name "CMakeLists.txt" -exec sed -i \
             's/target-cpu=nehalem/target-cpu=penryn/g' {} +
+          # zlib: remove SSE4.2/AVX/AVX-512/PCLMUL SIMD kernels (not supported on Penryn)
+          # Lines 79-100 of zlib.ts (X86_SSE42 through X86_VPCLMULQDQ_CRC)
+          bun -e "
+            const fs = require('fs');
+            const f = 'scripts/build/deps/zlib.ts';
+            let lines = fs.readFileSync(f, 'utf8').split('\n');
+            // Remove lines 78..99 (0-indexed: SSE4.2, PCLMUL, AVX2, AVX-512, VPCLMULQDQ blocks)
+            lines.splice(78, 22);
+            fs.writeFileSync(f, lines.join('\n'));
+            console.log('zlib.ts: removed SSE4.2+/AVX kernels (lines 79-100)');
+          "
+          # libwebp: replace AVX2 with SSE4.1 for Penryn compat
+          sed -i 's/\"_avx2.c\", \"-mavx2\"/\"_avx2.c\", \"-msse4.1\"/' scripts/build/deps/libwebp.ts
+          echo "libwebp.ts: AVX2 → SSE4.1"
+          # Verify no bad compile flags remain (check for -m flag, not filenames)
+          grep -rn '\-mavx2\|\-mavx512\|\-msse4\.2\|\-mpclmul\|\-mvpclmulqdq' scripts/build/deps/ && \
+            { echo "ERROR: AVX/AVX-512/SSE4.2/PCLMUL compile flags still present in deps!"; exit 1; } || \
+            echo "All deps SIMD compile flags are Penryn-safe"
           grep -rn --include="CMakeLists.txt" --include="*.ts" \
             --include="*.rs" "march=nehalem\|target-cpu=nehalem" . && \
             { echo "ERROR: Nehalem still present!"; exit 1; } || \
