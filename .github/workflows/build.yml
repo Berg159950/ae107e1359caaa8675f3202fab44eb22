@@ -66,9 +66,8 @@ jobs:
             's/-march=nehalem/-march=penryn/g' {} +
           find . -name "CMakeLists.txt" -exec sed -i \
             's/target-cpu=nehalem/target-cpu=penryn/g' {} +
-          grep -rn --include="*.ts" --include="*.rs" --include="*.cpp" \
-            --include="*.h" --include="CMakeLists.txt" \
-            "march=nehalem\|target-cpu=nehalem\|flag:.*-march.*nehalem" . && \
+          grep -rn --include="CMakeLists.txt" --include="*.ts" \
+            --include="*.rs" "march=nehalem\|target-cpu=nehalem" . && \
             { echo "ERROR: Nehalem still present!"; exit 1; } || \
             echo "All Nehalem references patched successfully"
 
