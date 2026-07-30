@@ -10,6 +10,7 @@ on:
 
 env:
   BUN_COMMIT: ${{ github.event.inputs.bun_commit }}
+  WEBKIT_VERSION: "549170099226f816a4b204ea1d8fa102fb79eefa"
 
 jobs:
   build:
@@ -21,7 +22,7 @@ jobs:
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y -qq ccache cmake ninja-build patchelf
-          # Install LLVM/clang 21 (required by Bun build)
+          # Clang 21 (required by Bun build)
           wget -qO- https://apt.llvm.org/llvm-snapshot.gpg.key | sudo tee /etc/apt/trusted.gpg.d/llvm.asc
           sudo add-apt-repository -y "deb http://apt.llvm.org/noble/ llvm-toolchain-noble-21 main"
           sudo apt-get update -qq
@@ -58,6 +59,21 @@ jobs:
           done
           git checkout FETCH_HEAD
 
+      - name: Clone WebKit (local dep for --webkit=local)
+        run: |
+          mkdir -p /tmp/bun-src/vendor
+          for i in 1 2 3; do
+            git clone --depth 1 https://github.com/oven-sh/WebKit.git /tmp/bun-src/vendor/WebKit && break
+            [ $i -lt 3 ] && sleep 10
+          done
+          [ -d /tmp/bun-src/vendor/WebKit/.git ] || exit 1
+          cd /tmp/bun-src/vendor/WebKit
+          for i in 1 2 3; do
+            git fetch --depth 1 origin $WEBKIT_VERSION && break
+            [ $i -lt 3 ] && sleep 10
+          done
+          git checkout FETCH_HEAD
+
       - name: Apply Penryn patch
         run: |
           cd /tmp/bun-src
@@ -73,7 +89,7 @@ jobs:
           # ISA verifier allowlist
           sed -i 's/NEHALEM_ALLOWED/PENRYN_ALLOWED/g' scripts/verify-baseline-static/src/main.rs
           sed -i 's/nehalem/penryn/g' scripts/verify-baseline-static/src/main.rs
-          # CMakeLists dependencies
+          # CMakeLists dependencies (in vendor/WebKit too)
           find . -name "CMakeLists.txt" -exec sed -i \
             's/-march=nehalem/-march=penryn/g' {} +
           find . -name "CMakeLists.txt" -exec sed -i \
@@ -83,10 +99,10 @@ jobs:
             { echo "ERROR: Nehalem still present!"; exit 1; } || \
             echo "All Nehalem references patched successfully"
 
-      - name: Build Bun
+      - name: Build Bun (with local WebKit)
         run: |
           cd /tmp/bun-src
-          bun run build:release 2>&1
+          bun run build:release --webkit=local 2>&1
 
       - name: QEMU Penryn verify
         run: |
