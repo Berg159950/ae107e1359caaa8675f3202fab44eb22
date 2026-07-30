@@ -46,17 +46,16 @@ jobs:
 
       - name: Clone Bun
         run: |
-          for i in 1 2 3; do
-            git clone --depth 1 https://github.com/oven-sh/bun.git /tmp/bun-src && break
-            [ $i -lt 3 ] && sleep 10
-          done
-          [ -d /tmp/bun-src/.git ] || exit 1
-          cd /tmp/bun-src
+          mkdir -p /tmp/bun-src && cd /tmp/bun-src
+          git init
+          git remote add origin https://github.com/oven-sh/bun.git
           for i in 1 2 3; do
             git fetch --depth 1 origin $BUN_COMMIT && break
             [ $i -lt 3 ] && sleep 10
           done
           git checkout FETCH_HEAD
+          # WebKit submodule (critical for build)
+          git submodule update --init --depth 1 vendor/WebKit 2>&1 | tail -5
 
       - name: Apply Penryn patch
         run: |
