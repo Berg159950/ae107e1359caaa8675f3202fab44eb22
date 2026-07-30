@@ -135,7 +135,9 @@ jobs:
 
       - name: Package artifact
         run: |
-          tar czf /tmp/bun-penryn-linux-x64.tar.gz -C /tmp/bundle .
+          mkdir -p /tmp/pkg
+          cp -r /tmp/bundle /tmp/pkg/bun-penryn
+          tar czf /tmp/bun-penryn-linux-x64.tar.gz -C /tmp/pkg bun-penryn
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
