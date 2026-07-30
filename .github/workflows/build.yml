@@ -133,8 +133,12 @@ jobs:
         run: |
           LD_LIBRARY_PATH= /tmp/bundle/bun --version
 
+      - name: Package artifact
+        run: |
+          tar czf /tmp/bun-penryn-linux-x64.tar.gz -C /tmp/bundle .
+
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: bun-penryn
-          path: /tmp/bundle/
+          name: bun-penryn-linux-x64
+          path: /tmp/bun-penryn-linux-x64.tar.gz
