@@ -111,9 +111,23 @@ jobs:
           # Highway: limit SIMD targets to SSE2/SSSE3 (no SSE4.2/POPCNT/AVX)
           sed -i 's/HWY_ENABLED(HWY_BASELINE_SCALAR | HWY_SSE2 | HWY_SSSE3 | HWY_SSE4 | HWY_AVX2 | HWY_AVX3 | HWY_AVX3_DL | HWY_AVX3_ZEN4 | HWY_AVX3_SPR | HWY_AVX10_2)/HWY_ENABLED(HWY_BASELINE_SCALAR | HWY_SSE2 | HWY_SSSE3)/' scripts/build/deps/highway.ts
           echo "highway.ts: removed SSE4/AVX2/AVX3 targets (no POPCNT)"
-          # Highway: also constrain highway_strings.cpp via global flags
-          sed -i 's/-mno-popcnt"/-mno-popcnt", "-DHWY_ATTAINABLE_TARGETS_X86=HWY_ENABLED(HWY_BASELINE_SCALAR | HWY_SSE2 | HWY_SSSE3)"/' scripts/build/flags.ts
-          echo "flags.ts: added HWY_ATTAINABLE_TARGETS_X86 define"
+          # Highway: per-file override for highway_strings.cpp (can't use CMAKE — parens break CMake parser)
+          bun -e "
+            const fs = require('fs');
+            const f = 'scripts/build/flags.ts';
+            let content = fs.readFileSync(f, 'utf8');
+            const insert = \`  {
+    file: \"src/jsc/bindings/highway_strings.cpp\",
+    extraFlags: [\"-DHWY_ATTAINABLE_TARGETS_X86=HWY_ENABLED(HWY_BASELINE_SCALAR | HWY_SSE2 | HWY_SSSE3)\"],
+    when: c => c.x64,
+    desc: \"Limit Highway SIMD targets to SSE2/SSSE3 (no SSE4.2 POPCNT on Penryn)\",
+  },
+\`;
+            // Insert before the closing ]; of fileOverrides
+            content = content.replace('];\n\n// ═══════════════════════════════════════════════', insert + '];\n\n// ═══════════════════════════════════════════════');
+            fs.writeFileSync(f, content);
+            console.log('flags.ts: added HWY_ATTAINABLE_TARGETS_X86 override for highway_strings.cpp');
+          "
           # Verify no bad compile flags remain (only check code, not comments)
           # Note: grep found `-mavx2` in a comment in libwebp.ts — not a compile flag
           echo "Deps SIMD patches applied (skipping flag verification — checked via Nehalem grep)"
